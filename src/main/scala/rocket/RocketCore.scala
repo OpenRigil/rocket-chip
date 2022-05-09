@@ -26,6 +26,11 @@ case class RocketCoreParams(
   useCompressed: Boolean = true,
   useRVE: Boolean = false,
   useSCIE: Boolean = false,
+  useBitManip: Boolean = false,
+  useBitManipCrypto: Boolean = false,
+  useABLU: Boolean = false,
+  useCryptoNIST: Boolean = false,
+  useCryptoSM: Boolean = false,
   nLocalInterrupts: Int = 0,
   useNMI: Boolean = false,
   nBreakpoints: Int = 1,
@@ -179,6 +184,14 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     (if (minFLen == 16) new HDecode +: (xLen > 32).option(new H64Decode).toSeq ++: (fLen >= 64).option(new HDDecode).toSeq else Nil) ++:
     (usingRoCC.option(new RoCCDecode)) ++:
     (rocketParams.useSCIE.option(new SCIEDecode)) ++:
+    (if (usingBitManip) new ZBADecode +: (xLen == 64).option(new ZBA64Decode).toSeq ++: new ZBBMDecode +: new ZBBORCBDecode +: new ZBCRDecode +: new ZBSDecode +: (xLen == 32).option(new ZBS32Decode).toSeq ++: (xLen == 64).option(new ZBS64Decode).toSeq ++: new ZBBSEDecode +: new ZBBCDecode +: (xLen == 64).option(new ZBBC64Decode).toSeq else Nil) ++:
+    (if (usingBitManip && !usingBitManipCrypto) (xLen == 32).option(new ZBBZE32Decode).toSeq ++: (xLen == 64).option(new ZBBZE64Decode).toSeq else Nil) ++:
+    (if (usingBitManip || usingBitManipCrypto) new ZBBNDecode +: new ZBCDecode +: new ZBBRDecode +: (xLen == 32).option(new ZBBR32Decode).toSeq ++: (xLen == 64).option(new ZBBR64Decode).toSeq ++: (xLen == 32).option(new ZBBREV832Decode).toSeq ++: (xLen == 64).option(new ZBBREV864Decode).toSeq else Nil) ++:
+    (if (usingBitManipCrypto) new ZBKXDecode +: new ZBKBDecode +: (xLen == 32).option(new ZBKB32Decode).toSeq ++: (xLen == 64).option(new ZBKB64Decode).toSeq else Nil) ++:
+    (if (usingCryptoNIST) (xLen == 32).option(new ZKND32Decode).toSeq ++: (xLen == 64).option(new ZKND64Decode).toSeq else Nil) ++:
+    (if (usingCryptoNIST) (xLen == 32).option(new ZKNE32Decode).toSeq ++: (xLen == 64).option(new ZKNE64Decode).toSeq else Nil) ++:
+    (if (usingCryptoNIST) new ZKNHDecode +: (xLen == 32).option(new ZKNH32Decode).toSeq ++: (xLen == 64).option(new ZKNH64Decode).toSeq else Nil) ++:
+    (usingCryptoSM.option(new ZKSDecode)) ++:
     (if (xLen == 32) new I32Decode else new I64Decode) +:
     (usingVM.option(new SVMDecode)) ++:
     (usingSupervisor.option(new SDecode)) ++:
@@ -313,7 +326,8 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     id_ctrl.rocc && csr.io.decode(0).rocc_illegal ||
     id_ctrl.scie && !(id_scie_decoder.unpipelined || id_scie_decoder.pipelined) ||
     id_csr_en && (csr.io.decode(0).read_illegal || !id_csr_ren && csr.io.decode(0).write_illegal) ||
-    !ibuf.io.inst(0).bits.rvc && (id_system_insn && csr.io.decode(0).system_illegal)
+    !ibuf.io.inst(0).bits.rvc && (id_system_insn && csr.io.decode(0).system_illegal) ||
+    id_ctrl.zkn && id_ctrl.alu_fn(ZKN.FN_Len-1,0) === ZKN.FN_AES_KS1 && id_inst(0)(23,20) > 0xA.U(4.W)
   val id_virtual_insn = id_ctrl.legal &&
     ((id_csr_en && !(!id_csr_ren && csr.io.decode(0).write_illegal) && csr.io.decode(0).virtual_access_illegal) ||
      (!ibuf.io.inst(0).bits.rvc && id_system_insn && csr.io.decode(0).virtual_system_illegal))
@@ -396,7 +410,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     A2_IMM -> ex_imm,
     A2_SIZE -> Mux(ex_reg_rvc, SInt(2), SInt(4))))
 
-  val alu = Module(new ALU)
+  val alu = Module(if (usingABLU) new ABLU else new ALU)
   alu.io.dw := ex_ctrl.alu_dw
   alu.io.fn := ex_ctrl.alu_fn
   alu.io.in2 := ex_op2.asUInt
@@ -409,6 +423,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     u.io.rs2 := ex_rs(1)
     u.io.rd
   }
+
   val mem_scie_pipelined_wdata = if (!rocketParams.useSCIE) 0.U else {
     val u = Module(new SCIEPipelined(xLen))
     u.io.clock := Module.clock
@@ -418,6 +433,39 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     u.io.rs2 := ex_rs(1)
     u.io.rd
   }
+
+  // FIXME: merge this into ABLU
+  val ex_zbk_wdata = if (!usingBitManipCrypto && !usingBitManip) 0.U else {
+      val zbk = Module(new BitManipCrypto(xLen))
+      zbk.io.zbk_fn := ex_ctrl.alu_fn
+      zbk.io.dw     := ex_ctrl.alu_dw
+      zbk.io.valid  := ex_ctrl.zbk
+      zbk.io.rs1    := ex_op1.asUInt
+      zbk.io.rs2    := ex_op2.asUInt
+      zbk.io.rd
+    }
+
+  val ex_zkn_wdata = if (!usingCryptoNIST) 0.U else {
+      val zkn = Module(new CryptoNIST(xLen))
+      zkn.io.zkn_fn := ex_ctrl.alu_fn
+      zkn.io.valid  := ex_ctrl.zkn
+      zkn.io.hl     := ex_reg_inst(27)
+      zkn.io.bs     := ex_reg_inst(31,30)
+      zkn.io.rcon   := ex_reg_inst(23,20)
+      zkn.io.rs1    := ex_op1.asUInt
+      zkn.io.rs2    := ex_op2.asUInt
+      zkn.io.rd
+    }
+
+  val ex_zks_wdata = if (!usingCryptoSM) 0.U else {
+      val zks = Module(new CryptoSM(xLen))
+      zks.io.zks_fn := ex_ctrl.alu_fn
+      zks.io.valid  := ex_ctrl.zks
+      zks.io.bs     := ex_reg_inst(31,30)
+      zks.io.rs1    := ex_op1.asUInt
+      zks.io.rs2    := ex_op2.asUInt
+      zks.io.rd
+    }
 
   // multiplier and divider
   val div = Module(new MulDiv(if (pipelinedMul) mulDivParams.copy(mulUnroll = 0) else mulDivParams, width = xLen))
@@ -568,7 +616,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     mem_reg_mem_size := ex_reg_mem_size
     mem_reg_hls_or_dv := io.dmem.req.bits.dv
     mem_reg_pc := ex_reg_pc
-    mem_reg_wdata := Mux(ex_scie_unpipelined, ex_scie_unpipelined_wdata, alu.io.out)
+    mem_reg_wdata := Mux(ex_scie_unpipelined, ex_scie_unpipelined_wdata, Mux(ex_ctrl.zbk,ex_zbk_wdata, Mux(ex_ctrl.zkn,ex_zkn_wdata, Mux(ex_ctrl.zks,ex_zks_wdata,alu.io.out))))
     mem_br_taken := alu.io.cmp_out
 
     when (ex_ctrl.rxs2 && (ex_ctrl.mem || ex_ctrl.rocc || ex_sfence)) {
