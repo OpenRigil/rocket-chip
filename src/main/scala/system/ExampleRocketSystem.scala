@@ -13,6 +13,7 @@ class ExampleRocketSystem(implicit p: Parameters) extends RocketSubsystem
     with CanHaveMasterAXI4MemPort
     with CanHaveMasterAXI4MMIOPort
     with CanHaveSlaveAXI4Port
+    with freechips.rocketchip.devices.tilelink.CanHavePeripheryMontgomery
 {
   // optionally add ROM devices
   // Note that setting BootROMLocated will override the reset_vector for all tiles
