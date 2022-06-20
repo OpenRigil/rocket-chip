@@ -22,11 +22,12 @@ class BaseConfig extends Config(
 )
 
 class DefaultConfig extends Config(new WithNBigCores(1) ++ new WithCoherentBusTopology ++ new BaseConfig)
+
 class MontgomeryTLConfig extends Config(
   new freechips.rocketchip.devices.tilelink.WithMontgomery(
     baseAddress = 0x2000,
-    width = 31,
-    addPipe = 1
+    width = 32,
+    addPipe = 10
   ) ++
   new DefaultConfig)
 
