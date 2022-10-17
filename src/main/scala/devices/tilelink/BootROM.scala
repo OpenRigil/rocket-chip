@@ -74,7 +74,8 @@ object BootROM {
     lazy val contents = {
       val romdata = Files.readAllBytes(Paths.get(params.contentFileName))
       val rom = ByteBuffer.wrap(romdata)
-      rom.array() ++ subsystem.dtb.contents
+      //rom.array() ++ subsystem.dtb.contents
+      rom.array()
     }
 
     val bootrom = bootROMDomainWrapper {

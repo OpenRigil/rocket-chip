@@ -100,7 +100,7 @@ trait HasALUIO extends HasRocketCoreParameters {
   }
 }
 
-class ALU(implicit p: Parameters) extends CoreModule()(p) with HasALUIO {
+class RocketALU(implicit p: Parameters) extends CoreModule()(p) with HasALUIO {
   // ADD, SUB
   val in2_inv = Mux(isSub(io.fn), ~io.in2, io.in2)
   val in1_xor_in2 = io.in1 ^ in2_inv

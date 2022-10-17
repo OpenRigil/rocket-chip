@@ -416,7 +416,7 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
     A2_IMM -> ex_imm,
     A2_SIZE -> Mux(ex_reg_rvc, SInt(2), SInt(4))))
 
-  val alu = Module(if (usingABLU) new ABLU else new ALU)
+  val alu = Module(if (usingABLU) new ABLU else new RocketALU)
   alu.io.dw := ex_ctrl.alu_dw
   alu.io.fn := ex_ctrl.alu_fn
   alu.io.in2 := ex_op2.asUInt
@@ -1067,10 +1067,10 @@ class Rocket(tile: RocketTile)(implicit p: Parameters) extends CoreModule()(p)
   xrfWriteBundle.excpt := false.B
   xrfWriteBundle.priv_mode := csr.io.trace(0).priv
 
-  PlusArg.timeout(
-    name = "max_core_cycles",
-    docstring = "Kill the emulation after INT rdtime cycles. Off if 0."
-  )(csr.io.time)
+  //PlusArg.timeout(
+  //  name = "max_core_cycles",
+  //  docstring = "Kill the emulation after INT rdtime cycles. Off if 0."
+  //)(csr.io.time)
 
   } // leaving gated-clock domain
   val rocketImpl = withClock (gated_clock) { new RocketImpl }
